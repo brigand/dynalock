@@ -27,6 +27,8 @@ pub enum DynaErrorKind {
     ProviderError,
     /// Lock has been acquired by another processor.
     LockAlreadyAcquired,
+    /// A timeout occurred
+    Timeout,
 }
 
 impl DynaErrorKind {
@@ -36,6 +38,7 @@ impl DynaErrorKind {
             DynaErrorKind::UnhandledError => "unhandled internal error",
             DynaErrorKind::ProviderError => "provider error",
             DynaErrorKind::LockAlreadyAcquired => "lock has been acquired by another processor",
+            DynaErrorKind::Timeout => "a timeout occurred",
         }
     }
 }
@@ -72,8 +75,8 @@ impl DynaError {
 impl fmt::Display for DynaError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.description {
-            Some(ref desc) => write!(f, "{}: {}", self.description(), desc),
-            None => write!(f, "{}", self.description()),
+            Some(ref desc) => write!(f, "{}: {}", self.kind, desc),
+            None => write!(f, "{}", self.kind),
         }
     }
 }
@@ -116,7 +119,7 @@ mod tests {
 
         assert_eq!(err.kind(), DynaErrorKind::ProviderError);
         assert_eq!(err.description, None);
-        assert_eq!(err.description(), "provider error");
+        assert_eq!(err.kind.as_str(), "provider error");
     }
 
     #[test]

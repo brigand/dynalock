@@ -44,8 +44,8 @@ fn lock_input_default_is_sane() {
     assert_eq!(input.consistent_read, Some(false));
 }
 
-#[test]
-fn first_to_acquire_the_lock_success() {
+#[tokio::test]
+async fn first_to_acquire_the_lock_success() {
     let body = MockResponseReader::read_response(
         "test_resources/dynamodb",
         "update_lock_item_success.json",
@@ -59,16 +59,19 @@ fn first_to_acquire_the_lock_success() {
         ..Default::default()
     };
 
-    let client = DynamoDbClient::new(mock, MockCredentialsProvider, Region::UsEast1);
+    let client = DynamoDbClient::new_with(mock, MockCredentialsProvider, Region::UsEast1);
     let driver = DynamoDbDriver::new(client, &input);
     let mut lock = DistLock::new(driver, Duration::from_secs(10));
 
-    let instant = lock.acquire_lock(&DynamoDbLockInput::default()).unwrap();
+    let instant = lock
+        .acquire_lock(&DynamoDbLockInput::default())
+        .await
+        .unwrap();
     assert_eq!(instant.elapsed().as_secs(), 0);
 }
 
-#[test]
-fn second_to_acquire_the_lock_fail() {
+#[tokio::test]
+async fn second_to_acquire_the_lock_fail() {
     let body = MockResponseReader::read_response(
         "test_resources/dynamodb",
         "update_lock_condition_fail.json",
@@ -82,11 +85,11 @@ fn second_to_acquire_the_lock_fail() {
         ..Default::default()
     };
 
-    let client = DynamoDbClient::new(mock, MockCredentialsProvider, Region::UsEast1);
+    let client = DynamoDbClient::new_with(mock, MockCredentialsProvider, Region::UsEast1);
     let driver = DynamoDbDriver::new(client, &input);
     let mut lock = DistLock::new(driver, Duration::from_secs(10));
 
-    let result = lock.acquire_lock(&DynamoDbLockInput::default());
+    let result = lock.acquire_lock(&DynamoDbLockInput::default()).await;
     assert!(result.is_err());
     assert_eq!(
         result.err().unwrap().kind(),
@@ -94,8 +97,8 @@ fn second_to_acquire_the_lock_fail() {
     );
 }
 
-#[test]
-fn refresh_lock_updates_current_token_success() {
+#[tokio::test]
+async fn refresh_lock_updates_current_token_success() {
     let body =
         MockResponseReader::read_response("test_resources/dynamodb", "get_lock_item_success.json");
     let mock = MockRequestDispatcher::with_status(200).with_body(&body);
@@ -107,18 +110,18 @@ fn refresh_lock_updates_current_token_success() {
         ..Default::default()
     };
 
-    let client = DynamoDbClient::new(mock, MockCredentialsProvider, Region::UsEast1);
+    let client = DynamoDbClient::new_with(mock, MockCredentialsProvider, Region::UsEast1);
     let driver = DynamoDbDriver::new(client, &input);
     let mut lock = DistLock::new(driver, Duration::from_secs(10));
     assert!(lock.driver.current_token.is_empty());
 
-    let result = lock.refresh_lock(&DynamoDbLockInput::default());
+    let result = lock.refresh_lock(&DynamoDbLockInput::default()).await;
     assert!(result.is_ok());
     assert_eq!(lock.driver.current_token, String::from("test RVN token"));
 }
 
-#[test]
-fn refresh_lock_no_update_current_token_when_empty_success() {
+#[tokio::test]
+async fn refresh_lock_no_update_current_token_when_empty_success() {
     let body = MockResponseReader::read_response(
         "test_resources/dynamodb",
         "get_empty_lock_item_success.json",
@@ -132,13 +135,13 @@ fn refresh_lock_no_update_current_token_when_empty_success() {
         ..Default::default()
     };
 
-    let client = DynamoDbClient::new(mock, MockCredentialsProvider, Region::UsEast1);
+    let client = DynamoDbClient::new_with(mock, MockCredentialsProvider, Region::UsEast1);
     let driver = DynamoDbDriver::new(client, &input);
     let mut lock = DistLock::new(driver, Duration::from_secs(10));
     assert!(lock.driver.current_token.is_empty());
     lock.driver.current_token = String::from("test-manually-set RVN token");
 
-    let result = lock.refresh_lock(&DynamoDbLockInput::default());
+    let result = lock.refresh_lock(&DynamoDbLockInput::default()).await;
     assert!(result.is_ok());
     assert_eq!(
         lock.driver.current_token,
@@ -146,8 +149,8 @@ fn refresh_lock_no_update_current_token_when_empty_success() {
     );
 }
 
-#[test]
-fn release_lock_clears_current_token_success() {
+#[tokio::test]
+async fn release_lock_clears_current_token_success() {
     let body = MockResponseReader::read_response(
         "test_resources/dynamodb",
         "update_lock_item_success.json",
@@ -161,19 +164,19 @@ fn release_lock_clears_current_token_success() {
         ..Default::default()
     };
 
-    let client = DynamoDbClient::new(mock, MockCredentialsProvider, Region::UsEast1);
+    let client = DynamoDbClient::new_with(mock, MockCredentialsProvider, Region::UsEast1);
     let driver = DynamoDbDriver::new(client, &input);
     let mut lock = DistLock::new(driver, Duration::from_secs(10));
     lock.driver.current_token = String::from("test RVN token");
 
-    let result = lock.release_lock(&DynamoDbLockInput::default());
+    let result = lock.release_lock(&DynamoDbLockInput::default()).await;
     assert!(result.is_ok());
     println!("{}", lock.driver.current_token);
     assert!(lock.driver.current_token.is_empty())
 }
 
-#[test]
-fn remaining_time_is_calculated_correctly_success() {
+#[tokio::test]
+async fn remaining_time_is_calculated_correctly_success() {
     let body = MockResponseReader::read_response(
         "test_resources/dynamodb",
         "update_lock_item_success.json",
@@ -187,11 +190,14 @@ fn remaining_time_is_calculated_correctly_success() {
         ..Default::default()
     };
 
-    let client = DynamoDbClient::new(mock, MockCredentialsProvider, Region::UsEast1);
+    let client = DynamoDbClient::new_with(mock, MockCredentialsProvider, Region::UsEast1);
     let driver = DynamoDbDriver::new(client, &input);
     let mut lock = DistLock::new(driver, Duration::from_secs(10));
 
-    let instant = lock.acquire_lock(&DynamoDbLockInput::default()).unwrap();
+    let instant = lock
+        .acquire_lock(&DynamoDbLockInput::default())
+        .await
+        .unwrap();
     let remaining = lock.remaining(instant).unwrap();
 
     assert_eq!(remaining.as_secs(), 9);

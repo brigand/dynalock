@@ -34,17 +34,21 @@
 //! as long as this invariant holds, fence token collisions are as rare as the CSPRNG period
 //! allows it to be (i.e., incredibly long period).
 
+use log::{error, info, warn};
+use maplit::hashmap;
 use std::default::Default;
+use std::future::Future;
 use std::result::Result;
 use std::time::{Duration, Instant, SystemTime, SystemTimeError, UNIX_EPOCH};
 use uuid::Uuid;
 
-use rusoto_core::reactor::{CredentialsProvider, RequestDispatcher};
-use rusoto_core::{DispatchSignedRequest, ProvideAwsCredentials};
-use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, GetItemError, GetItemInput,
-                      UpdateItemError, UpdateItemInput};
+use rusoto_core::RusotoError;
+use rusoto_dynamodb::{
+    AttributeValue, DynamoDb, DynamoDbClient, GetItemError, GetItemInput, UpdateItemError,
+    UpdateItemInput,
+};
 
-use {DistLock, DynaError, DynaErrorKind, Locking};
+use crate::{DistLock, DynaError, DynaErrorKind, Locking};
 
 #[cfg(test)]
 mod tests;
@@ -71,15 +75,11 @@ mod tests;
 ///     };
 ///
 ///     let driver = DynamoDbDriver::new(
-///         DynamoDbClient::simple(Region::UsEast1), &input);
+///         DynamoDbClient::new(Region::UsEast1), &input);
 /// # }
 /// ```
-pub struct DynamoDbDriver<P = CredentialsProvider, D = RequestDispatcher>
-where
-    P: ProvideAwsCredentials,
-    D: DispatchSignedRequest,
-{
-    client: DynamoDbClient<P, D>,
+pub struct DynamoDbDriver {
+    client: DynamoDbClient,
     table_name: String,
     partition_key_field_name: String,
     token_field_name: String,
@@ -90,16 +90,12 @@ where
     current_token: String,
 }
 
-impl<P, D> DynamoDbDriver<P, D>
-where
-    P: ProvideAwsCredentials,
-    D: DispatchSignedRequest,
-{
+impl DynamoDbDriver {
     /// Initialize a new DynamoDbDriver structure and fill it with the `client`
     /// and `input` variables' contents.
-    pub fn new(client: DynamoDbClient<P, D>, input: &DynamoDbDriverInput) -> Self {
+    pub fn new(client: DynamoDbClient, input: &DynamoDbDriverInput) -> Self {
         DynamoDbDriver {
-            client: client,
+            client,
             table_name: input.table_name.clone(),
             partition_key_field_name: input.partition_key_field_name.clone(),
             partition_key_value: input.partition_key_value.clone(),
@@ -185,16 +181,16 @@ mod expressions {
         "attribute_exists(#token_field) AND #token_field = :cond_current_token";
 }
 
-impl<P, D> Locking for DistLock<DynamoDbDriver<P, D>>
-where
-    P: ProvideAwsCredentials + 'static,
-    D: DispatchSignedRequest + 'static,
-{
+#[async_trait::async_trait]
+impl Locking for DistLock<DynamoDbDriver> {
     type AcquireLockInputType = DynamoDbLockInput;
     type RefreshLockInputType = DynamoDbLockInput;
     type ReleaseLockInputType = DynamoDbLockInput;
 
-    fn acquire_lock(&mut self, input: &Self::AcquireLockInputType) -> Result<Instant, DynaError> {
+    async fn acquire_lock(
+        &mut self,
+        input: &Self::AcquireLockInputType,
+    ) -> Result<Instant, DynaError> {
         let new_token = Uuid::new_v4().hyphenated().to_string();
 
         // Use new token as current token if this is our first run
@@ -234,9 +230,9 @@ where
         // Make a sync call with timeout
         self.driver
             .client
-            .update_item(&update_input)
+            .update_item(update_input)
             .with_timeout(input.timeout)
-            .sync()?;
+            .await?;
 
         ////////// After this point the lock clock starts //////////
         let start = Instant::now();
@@ -254,7 +250,7 @@ where
         Ok(start)
     }
 
-    fn refresh_lock(&mut self, input: &Self::RefreshLockInputType) -> Result<(), DynaError> {
+    async fn refresh_lock(&mut self, input: &Self::RefreshLockInputType) -> Result<(), DynaError> {
         // Prepare get method input
         let get_input = GetItemInput {
             consistent_read: input.consistent_read,
@@ -269,11 +265,12 @@ where
         };
 
         // Make a sync call with timeout
-        let output = self.driver
+        let output = self
+            .driver
             .client
-            .get_item(&get_input)
+            .get_item(get_input)
             .with_timeout(input.timeout)
-            .sync()?;
+            .await?;
 
         // A lock item was found
         if output.item.is_some() {
@@ -295,7 +292,7 @@ where
         Ok(())
     }
 
-    fn release_lock(&mut self, input: &Self::ReleaseLockInputType) -> Result<(), DynaError> {
+    async fn release_lock(&mut self, input: &Self::ReleaseLockInputType) -> Result<(), DynaError> {
         // Prepare update method input
         let update_input = UpdateItemInput {
             table_name: self.driver.table_name.clone(),
@@ -319,9 +316,9 @@ where
         // Make a sync call with timeout
         self.driver
             .client
-            .update_item(&update_input)
+            .update_item(update_input)
             .with_timeout(input.timeout)
-            .sync()?;
+            .await?;
 
         // Lock released successfully, clear the fence token
         info!(
@@ -338,6 +335,53 @@ where
     }
 }
 
+#[async_trait::async_trait]
+trait WithTimeout {
+    type Ok: Send + 'static;
+    type Err: std::error::Error + 'static;
+
+    async fn with_timeout(mut self, timeout: Duration) -> Result<Self::Ok, Self::Err>;
+}
+
+#[async_trait::async_trait]
+impl<T, E, F> WithTimeout for F
+where
+    T: Send + 'static,
+    E: Into<DynaError> + 'static,
+    F: Future<Output = Result<T, E>> + Send,
+{
+    type Ok = T;
+    type Err = DynaError;
+
+    async fn with_timeout(mut self, timeout: Duration) -> Result<Self::Ok, Self::Err> {
+        match tokio::time::timeout(timeout, self).await {
+            Ok(Ok(x)) => Ok(x),
+            Ok(Err(e)) => Err(e.into()),
+            Err(_timeout) => Err(DynaError::new(DynaErrorKind::Timeout, None)),
+        }
+    }
+}
+
+// use std::pin::Pin;
+
+// #[async_trait::async_trait]
+// impl<T, F> WithTimeout for Pin<Box<dyn Future<Output = Result<T, >>
+//     where
+//         T: Send + 'static,
+//         F: Future<Output = Result<T, DynaError>> + Send
+// {
+//     type Ok = T;
+//     type Err = DynaError;
+
+//     async fn with_timeout(mut self, timeout: Duration) -> Result<Self::Ok, Self::Err> {
+//         match tokio::time::timeout(timeout, self).await {
+//             Ok(Ok(x)) => Ok(x),
+//             Ok(Err(e)) => Err(e),
+//             Err(_timeout) => Err(DynaError::new(DynaErrorKind::Timeout, None))
+//         }
+//     }
+// }
+
 impl From<SystemTimeError> for DynaError {
     fn from(err: SystemTimeError) -> DynaError {
         error!("{}", err);
@@ -345,17 +389,17 @@ impl From<SystemTimeError> for DynaError {
     }
 }
 
-impl From<GetItemError> for DynaError {
-    fn from(err: GetItemError) -> DynaError {
+impl From<RusotoError<GetItemError>> for DynaError {
+    fn from(err: RusotoError<GetItemError>) -> DynaError {
         error!("{}", err);
         DynaError::new(DynaErrorKind::ProviderError, Some(&err.to_string()))
     }
 }
 
-impl From<UpdateItemError> for DynaError {
-    fn from(err: UpdateItemError) -> DynaError {
+impl From<RusotoError<UpdateItemError>> for DynaError {
+    fn from(err: RusotoError<UpdateItemError>) -> DynaError {
         match err {
-            UpdateItemError::ConditionalCheckFailed(_) => {
+            RusotoError::Service(UpdateItemError::ConditionalCheckFailed(_)) => {
                 warn!("{}", err);
                 DynaError::new(DynaErrorKind::LockAlreadyAcquired, None)
             }

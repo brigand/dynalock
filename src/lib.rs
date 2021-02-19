@@ -30,26 +30,16 @@
 //! contract where driver implementations will implement the Dynalock algorithm for
 //! using the provider's primitives.
 
-extern crate core;
-
-#[macro_use]
-extern crate log;
-
-#[macro_use]
-extern crate maplit;
-
-#[cfg(feature = "dynamodb")]
-pub extern crate rusoto_core;
-#[cfg(feature = "dynamodb")]
-pub extern crate rusoto_dynamodb;
-#[cfg(feature = "dynamodb")]
-extern crate uuid;
-
 pub mod error;
 pub mod providers;
 
 pub use error::{DynaError, DynaErrorKind};
 pub use providers::*;
+
+#[cfg(feature = "dynamodb")]
+pub use rusoto_core;
+#[cfg(feature = "dynamodb")]
+pub use rusoto_dynamodb;
 
 use std::time::{Duration, Instant};
 
@@ -60,29 +50,36 @@ use std::time::{Duration, Instant};
 /// must implement all of the associated types to provide input to this trait's
 /// methods.
 ///
-/// All trait methods return `Result<T, E>` where `E` is always `DynaError` except
+/// All trait methods return a `Future` of `Result<T, E>` where `E` is always `DynaError` except
 /// for `remaining` where it returns `Option<Duration>`.
+///
+/// The async-trait crate is recommended for implementing this trait.
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
 pub trait Locking {
     /// Associated type for the `acquire_lock` method input type.
-    type AcquireLockInputType;
+    type AcquireLockInputType: Send + Sync;
     /// Associated type for the `refresh_lock` method input type.
-    type RefreshLockInputType;
+    type RefreshLockInputType: Send + Sync;
     /// Associated type for the `release_lock` method input type.
-    type ReleaseLockInputType;
+    type ReleaseLockInputType: Send + Sync;
 
     /// Try to acquire a lock on a shared resource.
     ///
     /// If successful this method must return an `std::time::Instant` that marks
     /// the point in time when the lease on a lock was obtained. Providers should
     /// only generate an `Instant` after the last I/O call is made.
-    fn acquire_lock(&mut self, input: &Self::AcquireLockInputType) -> Result<Instant, DynaError>;
+    async fn acquire_lock(
+        &mut self,
+        input: &Self::AcquireLockInputType,
+    ) -> Result<Instant, DynaError>;
 
     /// Try to refresh the current lock data structure.
     ///
     /// This is useful when `acquire_lock` fails with `DynaErrorKind::LockAlreadyAcquired`
     /// error and the provider doesn't support a Compare-And-Swap primitive and only supports
     /// the compare-and-set variant.
-    fn refresh_lock(&mut self, input: &Self::RefreshLockInputType) -> Result<(), DynaError>;
+    async fn refresh_lock(&mut self, input: &Self::RefreshLockInputType) -> Result<(), DynaError>;
 
     /// When `acquire_lock` is successful it returns an `std::time::Instant` which is used
     /// to track the time from when the lease was issued. This method is used to safely
@@ -94,7 +91,7 @@ pub trait Locking {
     /// This optional method is only useful in rare situations and highly depends on
     /// the provider's implementation and primitives supported. Providers should
     /// implement this method to release the lock by clearing the fence token.
-    fn release_lock(&mut self, _input: &Self::ReleaseLockInputType) -> Result<(), DynaError> {
+    async fn release_lock(&mut self, _input: &Self::ReleaseLockInputType) -> Result<(), DynaError> {
         Ok(())
     }
 }
