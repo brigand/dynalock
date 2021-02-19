@@ -36,10 +36,10 @@ extern crate dynalock;
 use std::time::Duration;
 use std::thread::sleep;
 
-use dynalock::DistLock;
-use dynalock::dynamodb::{DynamoDbDriver, DynamoDbDriverInput};
-use dynalock::rusoto_core::Region;
-use dynalock::rusoto_dynamodb::DynamoDbClient;
+use dynalock_async::DistLock;
+use dynalock_async::dynamodb::{DynamoDbDriver, DynamoDbDriverInput};
+use dynalock_async::rusoto_core::Region;
+use dynalock_async::rusoto_dynamodb::DynamoDbClient;
 
 // Tell DynamoDbDriver about the table name and the partition key
 let input = DynamoDbInput {

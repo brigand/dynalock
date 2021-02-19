@@ -54,7 +54,6 @@ use std::time::{Duration, Instant};
 /// for `remaining` where it returns `Option<Duration>`.
 ///
 /// The async-trait crate is recommended for implementing this trait.
-#[cfg(feature = "async")]
 #[async_trait::async_trait]
 pub trait Locking {
     /// Associated type for the `acquire_lock` method input type.
@@ -104,7 +103,7 @@ pub trait Locking {
 ///
 /// ```rust
 /// use std::time::Duration;
-/// use dynalock::DistLock;
+/// use dynalock_async::DistLock;
 ///
 /// let mut dlock = DistLock::new(
 ///     "some driver",

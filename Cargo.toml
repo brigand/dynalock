@@ -1,5 +1,5 @@
 [package]
-name = "dynalock"
+name = "dynalock-async"
 edition = "2018"
 description = "A lease based distributed locking algorithm with support for DynamoDB"
 version = "0.1.0"
@@ -15,20 +15,18 @@ keywords = ["distributed", "locking", "dynamodb", "lease", "advisory", "tokio"]
 travis-ci = { repository = "ChorusOne/dynalock", branch = "master" }
 
 [features]
-default = ["dynamodb", "async-tokio"]
-dynamodb = ["rusoto_core", "rusoto_dynamodb", "uuid", "async-tokio"]
-async = ["futures", "async-trait"]
-async-tokio = ["tokio", "async"]
+default = ["dynamodb"]
+dynamodb = ["rusoto_core", "rusoto_dynamodb", "uuid"]
 
 [dependencies]
+async-trait = { version = "^0.1" }
+futures = { version = "^0.3" }
 log = { version = "^0.4" }
 maplit = { version = "^1.0" }
-uuid = { version = "^0.6", features = ["v4"], optional = true }
 rusoto_core = { version = "^0.46", optional = true }
 rusoto_dynamodb = { version = "^0.46", optional = true }
-tokio = { version = "^1", optional = true }
-futures = { version = "^0.3", optional = true }
-async-trait = { version = "^0.1", optional = true }
+tokio = { version = "^1" }
+uuid = { version = "^0.6", features = ["v4"], optional = true }
 
 [dev-dependencies]
 rusoto_mock = { version = "^0.46" }

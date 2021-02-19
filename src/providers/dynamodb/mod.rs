@@ -60,12 +60,11 @@ mod tests;
 /// Initialize a new DynamoDbDriver struct.
 ///
 /// ```rust,no_run
-/// extern crate dynalock;
 ///
-/// use dynalock::rusoto_core::Region;
-/// use dynalock::rusoto_dynamodb::DynamoDbClient;
+/// use dynalock_async::rusoto_core::Region;
+/// use dynalock_async::rusoto_dynamodb::DynamoDbClient;
 ///
-/// use dynalock::dynamodb::{DynamoDbDriver, DynamoDbDriverInput};
+/// use dynalock_async::dynamodb::{DynamoDbDriver, DynamoDbDriverInput};
 ///
 /// # fn main() {
 ///     let input = DynamoDbDriverInput {
